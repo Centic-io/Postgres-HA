@@ -1,0 +1,27 @@
+networks:
+  proxy-net:
+    driver: bridge
+
+services:
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    network_mode: host
+    volumes:
+      - ../shared/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7000"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    network_mode: host
+    volumes:
+      - ../shared/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ../shared/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    restart: always
+    depends_on:
+      - haproxy

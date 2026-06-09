@@ -1,0 +1,54 @@
+networks:
+  pg-net:
+    driver: host
+
+volumes:
+  etcd-data:
+  patroni-data:
+
+services:
+
+  etcd:
+    image: bitnamilegacy/etcd:3.5
+    network_mode: host
+    environment:
+      ALLOW_NONE_AUTHENTICATION: "yes"
+      ETCD_NAME: "etcd-node1"
+      ETCD_DATA_DIR: "/bitnami/etcd/data"
+      ETCD_LISTEN_PEER_URLS: "http://10.0.0.1:2380"
+      ETCD_LISTEN_CLIENT_URLS: "http://10.0.0.1:2379,http://localhost:2379"
+      ETCD_ADVERTISE_CLIENT_URLS: "http://10.0.0.1:2379"
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: "http://10.0.0.1:2380"
+      ETCD_INITIAL_CLUSTER: "etcd-node1=http://10.0.0.1:2380,etcd-node2=http://10.0.0.2:2380,etcd-node3=http://10.0.0.3:2380"
+      ETCD_INITIAL_CLUSTER_TOKEN: "pg-ha-cluster"
+      ETCD_INITIAL_CLUSTER_STATE: "new"
+    volumes:
+      - etcd-data:/bitnami/etcd
+    restart: always
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://10.0.0.1:2379", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  patroni:
+    build:
+      context: ../shared/patroni
+      dockerfile: Dockerfile
+    network_mode: host
+    environment:
+      PATRONI_NAME: patroni-node1
+      PATRONI_DATA_DIR: /var/lib/postgresql/data
+    volumes:
+      - patroni-data:/var/lib/postgresql/data
+      - ../shared/patroni/patroni-node1.yml:/etc/patroni/patroni.yml:ro
+    restart: always
+    depends_on:
+      etcd:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://10.0.0.1:8008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

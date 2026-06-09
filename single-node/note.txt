@@ -1,0 +1,32 @@
+#Cấp quyền, chạy file .sh
+chmod +x deploy.sh
+./deploy.sh
+
+#Kiểm tra trạng thái node
+docker compose exec patroni-2 patronictl -c /etc/patroni/patroni.yml list
+
+# Tạo bảng
+PGPASSWORD=postgres_pass psql -h localhost -p 6432 -U postgres -c "CREATE TABLE test_failover (id SERIAL PRIMARY KEY, value TEXT, server_addr INET, inserted_at TIMESTAMPTZ DEFAULT NOW());"
+
+#Insert dữ liệu vào database
+PGPASSWORD=postgres_pass psql -h localhost -p 6432 -U postgres -c "INSERT INTO test_failover (value, server_addr) VALUES ('manual_record', inet_server_addr()) RETURNING *;"
+
+#SELECT dữ liệu từ database
+
+PGPASSWORD=postgres_pass psql -h localhost -p 6432 -U postgres -c "SELECT * FROM test_failover ORDER BY id;"
+
+PGPASSWORD=postgres_pass psql -h localhost -p 6432 -U postgres -c "
+SELECT server_addr, COUNT(*) AS records, MIN(inserted_at)::time(0) AS from_time, MAX(inserted_at)::time(0) AS to_time
+FROM test_failover
+GROUP BY server_addr
+ORDER BY MIN(inserted_at);"
+
+# Query trực tiếp vào patroni-1
+docker compose exec patroni-1 psql -U postgres -c "SELECT COUNT(*) FROM test_failover;"
+
+# Query trực tiếp vào patroni-2
+docker compose exec patroni-2 psql -U postgres -c "SELECT COUNT(*) FROM test_failover;"
+
+# Query trực tiếp vào patroni-3
+docker compose exec patroni-3 psql -U postgres -c "SELECT COUNT(*) FROM test_failover;"
+

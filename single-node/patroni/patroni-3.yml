@@ -1,0 +1,66 @@
+scope: cluster1
+namespace: /prod_env/
+name: patroni-3
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: patroni-3:8008
+
+etcd3:
+  hosts:
+    - etcd-1:2379
+    - etcd-2:2379
+    - etcd-3:2379
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        wal_keep_size: 128
+        max_wal_senders: 5
+        max_replication_slots: 10
+        wal_log_hints: "on"
+        max_connections: 512
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+  pg_hba:
+    - host replication replicator 0.0.0.0/0 md5
+    - host all all 0.0.0.0/0 md5
+
+  users:
+    admin:
+      password: "admin_pass"
+      options: [createrole, createdb]
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: patroni-3:5432
+  data_dir: /var/lib/postgresql/data
+  bin_dir: /usr/local/bin
+  pgpass: /tmp/pgpass
+  authentication:
+    replication:
+      username: replicator
+      password: "replicator_pass"
+    superuser:
+      username: postgres
+      password: "postgres_pass"
+  parameters:
+    unix_socket_directories: "/var/run/postgresql"
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

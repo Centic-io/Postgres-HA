@@ -1,0 +1,177 @@
+version: "3.9"
+
+networks:
+  pg-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+#  patroni-1-data:
+#  patroni-2-data:
+#  patroni-3-data:
+  etcd-1-data:
+  etcd-2-data:
+  etcd-3-data:
+
+x-etcd-env: &etcd-common
+  ALLOW_NONE_AUTHENTICATION: "yes"
+  ETCD_INITIAL_CLUSTER: "etcd-1=http://etcd-1:2380,etcd-2=http://etcd-2:2380,etcd-3=http://etcd-3:2380"
+  ETCD_INITIAL_CLUSTER_TOKEN: "pg-ha-cluster"
+  ETCD_INITIAL_CLUSTER_STATE: "new"
+  ETCD_LISTEN_CLIENT_URLS: "http://0.0.0.0:2379"
+  ETCD_LISTEN_PEER_URLS: "http://0.0.0.0:2380"
+
+services:
+
+  # ── etcd cluster (3 node để đảm bảo quorum) ──────────────────
+  etcd-1:
+    image: bitnamilegacy/etcd:3.5
+    environment:
+      <<: *etcd-common
+      ETCD_NAME: etcd-1
+      ETCD_ADVERTISE_CLIENT_URLS: "http://etcd-1:2379"
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: "http://etcd-1:2380"
+    volumes:
+      - etcd-1-data:/bitnami/etcd
+    networks: [pg-net]
+    restart: always
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  etcd-2:
+    image: bitnamilegacy/etcd:3.5
+    environment:
+      <<: *etcd-common
+      ETCD_NAME: etcd-2
+      ETCD_ADVERTISE_CLIENT_URLS: "http://etcd-2:2379"
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: "http://etcd-2:2380"
+    volumes:
+      - etcd-2-data:/bitnami/etcd
+    networks: [pg-net]
+    restart: always
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  etcd-3:
+    image: bitnamilegacy/etcd:3.5
+    environment:
+      <<: *etcd-common
+      ETCD_NAME: etcd-3
+      ETCD_ADVERTISE_CLIENT_URLS: "http://etcd-3:2379"
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: "http://etcd-3:2380"
+    volumes:
+      - etcd-3-data:/bitnami/etcd
+    networks: [pg-net]
+    restart: always
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Patroni + PostgreSQL (3 node) ────────────────────────────
+  patroni-1:
+    build:
+      context: ./patroni
+      dockerfile: Dockerfile
+    environment:
+      PATRONI_NAME: patroni-1
+      PATRONI_DATA_DIR: /var/lib/postgresql/data
+    volumes:
+      - ./data/patroni-1:/var/lib/postgresql/data
+      - ./patroni/patroni-1.yml:/etc/patroni/patroni.yml:ro
+    networks: [pg-net]
+    restart: always
+    depends_on:
+      etcd-1:
+        condition: service_healthy
+      etcd-2:
+        condition: service_healthy
+      etcd-3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  patroni-2:
+    build:
+      context: ./patroni
+      dockerfile: Dockerfile
+    environment:
+      PATRONI_NAME: patroni-2
+      PATRONI_DATA_DIR: /var/lib/postgresql/data
+    volumes:
+      - ./data/patroni-2:/var/lib/postgresql/data
+      - ./patroni/patroni-2.yml:/etc/patroni/patroni.yml:ro
+    networks: [pg-net]
+    restart: always
+    depends_on:
+      patroni-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  patroni-3:
+    build:
+      context: ./patroni
+      dockerfile: Dockerfile
+    environment:
+      PATRONI_NAME: patroni-3
+      PATRONI_DATA_DIR: /var/lib/postgresql/data
+    volumes:
+      - ./data/patroni-3:/var/lib/postgresql/data
+      - ./patroni/patroni-3.yml:/etc/patroni/patroni.yml:ro
+    networks: [pg-net]
+    restart: always
+    depends_on:
+      patroni-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── HAProxy ──────────────────────────────────────────────────
+  haproxy:
+    image: haproxy:2.9-alpine
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "5000:5000"   # primary read/write
+      - "5001:5001"   # replica read-only
+      - "7000:7000"   # stats UI
+    networks: [pg-net]
+    restart: always
+    depends_on:
+      patroni-1:
+        condition: service_healthy
+
+  # ── PgBouncer ─────────────────────────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    ports:
+      - "6432:6432"   # app kết nối vào đây
+    networks: [pg-net]
+    restart: always
+    depends_on:
+      - haproxy
